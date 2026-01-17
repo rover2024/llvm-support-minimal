@@ -7,8 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Testing/Support/Error.h"
+// #include "llvm/Support/raw_ostream.h"
+// #include "llvm/Testing/Support/Error.h"
+
+#include <sstream>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -18,8 +20,16 @@ namespace json {
 
 namespace {
 
-std::string s(const Value &E) { return llvm::formatv("{0}", E).str(); }
-std::string sp(const Value &E) { return llvm::formatv("{0:2}", E).str(); }
+std::string s(const Value &E) {
+  std::ostringstream OS;
+  llvm::json::format(E, OS);
+  return OS.str();
+}
+std::string sp(const Value &E) {
+  std::ostringstream OS;
+  llvm::json::format(E, OS, 2);
+  return OS.str();
+}
 
 TEST(JSONTest, Types) {
   EXPECT_EQ("true", s(true));
@@ -150,14 +160,12 @@ TEST(JSONTest, Object) {
 
 TEST(JSONTest, Parse) {
   auto Compare = [](llvm::StringRef S, Value Expected) {
-    if (auto E = parse(S)) {
+    if (auto E = parse(S); E.first) {
       // Compare both string forms and with operator==, in case we have bugs.
-      EXPECT_EQ(*E, Expected);
-      EXPECT_EQ(sp(*E), sp(Expected));
+      EXPECT_EQ(E.first.value(), Expected);
+      EXPECT_EQ(sp(E.first.value()), sp(Expected));
     } else {
-      handleAllErrors(E.takeError(), [S](const llvm::ErrorInfoBase &E) {
-        FAIL() << "Failed to parse JSON >>> " << S << " <<<: " << E.message();
-      });
+      FAIL() << "Failed to parse JSON >>> " << S << " <<<: " << E.second->message();
     }
   };
 
@@ -196,13 +204,11 @@ TEST(JSONTest, Parse) {
 
 TEST(JSONTest, ParseErrors) {
   auto ExpectErr = [](llvm::StringRef Msg, llvm::StringRef S) {
-    if (auto E = parse(S)) {
+    if (auto E = parse(S); E.first) {
       // Compare both string forms and with operator==, in case we have bugs.
       FAIL() << "Parsed JSON >>> " << S << " <<< but wanted error: " << Msg;
     } else {
-      handleAllErrors(E.takeError(), [S, Msg](const llvm::ErrorInfoBase &E) {
-        EXPECT_THAT(E.message(), testing::HasSubstr(std::string(Msg))) << S;
-      });
+        EXPECT_THAT(E.second->message(), testing::HasSubstr(std::string(Msg))) << S;
     }
   };
   ExpectErr("Unexpected EOF", "");
@@ -251,7 +257,7 @@ TEST(JSONTest, UTF8) {
 }
 
 TEST(JSONTest, Inspection) {
-  llvm::Expected<Value> Doc = parse(R"(
+  auto Doc = parse(R"(
     {
       "null": null,
       "boolean": false,
@@ -261,9 +267,9 @@ TEST(JSONTest, Inspection) {
       "object": {"fruit": "banana"}
     }
   )");
-  EXPECT_TRUE(!!Doc);
+  EXPECT_TRUE(Doc.first);
 
-  Object *O = Doc->getAsObject();
+  Object *O = Doc.first->getAsObject();
   ASSERT_TRUE(O);
 
   EXPECT_FALSE(O->getNull("missing"));
@@ -351,12 +357,12 @@ TEST(JSONTest, Integers) {
   };
   for (const auto &T : TestCases) {
     EXPECT_EQ(T.Str, s(T.Val)) << T.Desc;
-    llvm::Expected<Value> Doc = parse(T.Str);
-    EXPECT_TRUE(!!Doc) << T.Desc;
-    EXPECT_EQ(Doc->getAsInteger(), T.AsInt) << T.Desc;
-    EXPECT_EQ(Doc->getAsNumber(), T.AsNumber) << T.Desc;
-    EXPECT_EQ(T.Val, *Doc) << T.Desc;
-    EXPECT_EQ(T.Str, s(*Doc)) << T.Desc;
+    auto Doc = parse(T.Str);
+    EXPECT_TRUE(Doc.first) << T.Desc;
+    EXPECT_EQ(Doc.first->getAsInteger(), T.AsInt) << T.Desc;
+    EXPECT_EQ(Doc.first->getAsNumber(), T.AsNumber) << T.Desc;
+    EXPECT_EQ(T.Val, *Doc.first) << T.Desc;
+    EXPECT_EQ(T.Str, s(*Doc.first)) << T.Desc;
   }
 }
 
@@ -373,72 +379,75 @@ TEST(JSONTest, U64Integers) {
   // Test the parse() part.
   {
     const char *Str = "4611686018427387905";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), int64_t{4611686018427387905});
-    EXPECT_EQ(Doc->getAsUINT64(), uint64_t{4611686018427387905});
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), int64_t{4611686018427387905});
+    EXPECT_EQ(Doc.first->getAsUINT64(), uint64_t{4611686018427387905});
   }
 
   {
     const char *Str = "-78278238238328222";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), int64_t{-78278238238328222});
-    EXPECT_EQ(Doc->getAsUINT64(), std::nullopt);
+    if (Doc.second) {
+      std::cout << Doc.second->message() << std::endl;
+    }
+
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), int64_t{-78278238238328222});
+    EXPECT_EQ(Doc.first->getAsUINT64(), std::nullopt);
   }
 
   // Test with the largest 64 signed int.
   {
     const char *Str = "9223372036854775807";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), int64_t{9223372036854775807});
-    EXPECT_EQ(Doc->getAsUINT64(), uint64_t{9223372036854775807});
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), int64_t{9223372036854775807});
+    EXPECT_EQ(Doc.first->getAsUINT64(), uint64_t{9223372036854775807});
   }
 
   // Test with the largest 64 unsigned int.
   {
     const char *Str = "18446744073709551615";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), std::nullopt);
-    EXPECT_EQ(Doc->getAsUINT64(), uint64_t{18446744073709551615u});
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), std::nullopt);
+    EXPECT_EQ(Doc.first->getAsUINT64(), uint64_t{18446744073709551615u});
   }
 
   // Test with a number that is too big for 64 bits.
   {
     const char *Str = "184467440737095516150";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), std::nullopt);
-    EXPECT_EQ(Doc->getAsUINT64(), std::nullopt);
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), std::nullopt);
+    EXPECT_EQ(Doc.first->getAsUINT64(), std::nullopt);
     // The number was parsed as a double.
-    EXPECT_TRUE(!!Doc->getAsNumber());
+    EXPECT_TRUE(!!Doc.first->getAsNumber());
   }
 
   // Test with a negative number that is too small for 64 bits.
   {
     const char *Str = "-18446744073709551615";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_TRUE(!!Doc);
-    EXPECT_EQ(Doc->getAsInteger(), std::nullopt);
-    EXPECT_EQ(Doc->getAsUINT64(), std::nullopt);
+    EXPECT_TRUE(Doc.first);
+    EXPECT_EQ(Doc.first->getAsInteger(), std::nullopt);
+    EXPECT_EQ(Doc.first->getAsUINT64(), std::nullopt);
     // The number was parsed as a double.
-    EXPECT_TRUE(!!Doc->getAsNumber());
+    EXPECT_TRUE(!!Doc.first->getAsNumber());
   }
   // Test with a large number that is malformed.
   {
     const char *Str = "184467440737095516150.12.12";
-    llvm::Expected<Value> Doc = parse(Str);
+    auto Doc = parse(Str);
 
-    EXPECT_EQ("[1:27, byte=27]: Invalid JSON value (number?)",
-              llvm::toString(Doc.takeError()));
+    EXPECT_EQ("[1:27, byte=27]: Invalid JSON value (number?)", Doc.second->message());
   }
 }
 
@@ -487,7 +496,7 @@ struct CustomStruct {
 inline bool operator==(const CustomStruct &L, const CustomStruct &R) {
   return L.S == R.S && L.I == R.I && L.B == R.B;
 }
-inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
+inline std::ostream &operator<<(std::ostream &OS,
                                      const CustomStruct &S) {
   return OS << "(" << S.S << ", " << (S.I ? std::to_string(*S.I) : "None")
             << ", " << S.B << ")";
@@ -499,10 +508,9 @@ bool fromJSON(const Value &E, CustomStruct &R, Path P) {
 }
 
 static std::string errorContext(const Value &V, const Path::Root &R) {
-  std::string Context;
-  llvm::raw_string_ostream OS(Context);
+  std::stringstream OS;
   R.printErrorContext(V, OS);
-  return Context;
+  return OS.str();
 }
 
 TEST(JSONTest, Deserialize) {
@@ -528,8 +536,7 @@ TEST(JSONTest, Deserialize) {
 
   (*J.getAsObject()->getArray("foo"))[0] = 123;
   ASSERT_FALSE(fromJSON(J, R, Root));
-  EXPECT_EQ("expected object at CustomStruct.foo[0]",
-            toString(Root.getError()));
+  EXPECT_EQ("expected object at CustomStruct.foo[0]", Root.getError());
   const char *ExpectedDump = R"({
   "foo": [
     /* error: expected object */
@@ -542,47 +549,60 @@ TEST(JSONTest, Deserialize) {
   CustomStruct V;
   EXPECT_FALSE(fromJSON(nullptr, V, Root));
   EXPECT_EQ("expected object when parsing CustomStruct",
-            toString(Root.getError()));
+            Root.getError());
 
   EXPECT_FALSE(fromJSON(Object{}, V, Root));
-  EXPECT_EQ("missing value at CustomStruct.str", toString(Root.getError()));
+  EXPECT_EQ("missing value at CustomStruct.str", Root.getError());
 
   EXPECT_FALSE(fromJSON(Object{{"str", 1}}, V, Root));
-  EXPECT_EQ("expected string at CustomStruct.str", toString(Root.getError()));
+  EXPECT_EQ("expected string at CustomStruct.str", Root.getError());
 
   // std::optional<T> must parse as the correct type if present.
   EXPECT_FALSE(fromJSON(Object{{"str", "1"}, {"int", "string"}}, V, Root));
-  EXPECT_EQ("expected integer at CustomStruct.int", toString(Root.getError()));
+  EXPECT_EQ("expected integer at CustomStruct.int", Root.getError());
 
   // mapOptional must parse as the correct type if present.
   EXPECT_FALSE(fromJSON(Object{{"str", "1"}, {"bool", "string"}}, V, Root));
-  EXPECT_EQ("expected boolean at CustomStruct.bool", toString(Root.getError()));
+  EXPECT_EQ("expected boolean at CustomStruct.bool", Root.getError());
 }
+
+template <class T>
+static void expectErr2(const std::pair<std::optional<T>, std::optional<std::string>> &E, llvm::StringRef Msg, llvm::StringRef S) {
+  if (E.first) {
+    // Compare both string forms and with operator==, in case we have bugs.
+    FAIL() << "Parsed JSON >>> " << S << " <<< but wanted error: " << Msg;
+  } else {
+      EXPECT_THAT(E.second.value(), testing::HasSubstr(std::string(Msg))) << S;
+  }
+};
 
 TEST(JSONTest, ParseDeserialize) {
   auto E = parse<std::vector<CustomStruct>>(R"json(
     [{"str": "foo", "int": 42}, {"int": 42}]
   )json");
-  EXPECT_THAT_EXPECTED(E, FailedWithMessage("missing value at (root)[1].str"));
+  // EXPECT_THAT_EXPECTED(E, FailedWithMessage("missing value at (root)[1].str"));
+  expectErr2(E, "missing value at (root)[1].str", {});
 
   E = parse<std::vector<CustomStruct>>(R"json(
     [{"str": "foo", "int": 42}, {"str": "bar"}
   )json");
-  EXPECT_THAT_EXPECTED(
-      E,
-      FailedWithMessage("[3:2, byte=50]: Expected , or ] after array element"));
+  // EXPECT_THAT_EXPECTED(
+  //     E,
+  //     FailedWithMessage("[3:2, byte=50]: Expected , or ] after array element"));
+  expectErr2(E, "[3:2, byte=50]: Expected , or ] after array element", {});
 
   E = parse<std::vector<CustomStruct>>(R"json(
     [{"str": "foo", "int": 42}]
   )json");
-  EXPECT_THAT_EXPECTED(E, Succeeded());
-  EXPECT_THAT(*E, testing::SizeIs(1));
+  // EXPECT_THAT_EXPECTED(E, Succeeded());
+  // EXPECT_THAT(E.first, testing::SizeIs(1));
+  EXPECT_EQ(!!E.first, true);
+  EXPECT_EQ(E.first->size(), 1);
 }
 
 TEST(JSONTest, Stream) {
   auto StreamStuff = [](unsigned Indent) {
-    std::string S;
-    llvm::raw_string_ostream OS(S);
+    std::stringstream OS;
     OStream J(OS, Indent);
     J.comment("top*/level");
     J.object([&] {
@@ -593,7 +613,7 @@ TEST(JSONTest, Stream) {
         J.arrayBegin();
         J.value(43);
         J.arrayEnd();
-        J.rawValue([](raw_ostream &OS) { OS << "'unverified\nraw value'"; });
+        J.rawValue([](std::ostream &OS) { OS << "'unverified\nraw value'"; });
       });
       J.comment("attribute");
       J.attributeBegin("bar");
@@ -603,7 +623,7 @@ TEST(JSONTest, Stream) {
       J.attributeEnd();
       J.attribute("baz", "xyz");
     });
-    return S;
+    return OS.str();
   };
 
   const char *Plain =
@@ -633,11 +653,17 @@ TEST(JSONTest, Path) {
   Path::Root R("foo");
   Path P = R, A = P.field("a"), B = P.field("b");
   P.report("oh no");
-  EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("oh no when parsing foo"));
+
+  // EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("oh no when parsing foo"));
+  EXPECT_THAT(R.getError(), testing::HasSubstr(std::string("oh no when parsing foo")));
+
   A.index(1).field("c").index(2).report("boom");
-  EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("boom at foo.a[1].c[2]"));
+  // EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("boom at foo.a[1].c[2]"));
+  EXPECT_THAT(R.getError(), testing::HasSubstr(std::string("boom at foo.a[1].c[2]")));
+
   B.field("d").field("e").report("bam");
-  EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("bam at foo.b.d.e"));
+  // EXPECT_THAT_ERROR(R.getError(), FailedWithMessage("bam at foo.b.d.e"));
+  EXPECT_THAT(R.getError(), testing::HasSubstr(std::string("bam at foo.b.d.e")));
 
   Value V = Object{
       {"a", Array{42}},

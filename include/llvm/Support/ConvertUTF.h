@@ -222,7 +222,8 @@ LLVM_ABI unsigned getNumBytesForUTF8(UTF8 firstByte);
 
 template <typename T> class ArrayRef;
 template <typename T> class SmallVectorImpl;
-class StringRef;
+// class StringRef;
+using StringRef = std::string_view;
 
 /**
  * Convert an UTF8 StringRef to UTF8, UTF16, or UTF32 depending on

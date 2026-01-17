@@ -7,7 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/bit.h"
+// #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <string>
@@ -21,8 +22,8 @@ bool ConvertUTF8toWide(unsigned WideCharWidth, llvm::StringRef Source,
   ConversionResult result = conversionOK;
   // Copy the character span over.
   if (WideCharWidth == 1) {
-    const UTF8 *Pos = reinterpret_cast<const UTF8*>(Source.begin());
-    if (!isLegalUTF8String(&Pos, reinterpret_cast<const UTF8*>(Source.end()))) {
+    const UTF8 *Pos = reinterpret_cast<const UTF8*>(Source.data());
+    if (!isLegalUTF8String(&Pos, reinterpret_cast<const UTF8*>(Source.data() + Source.size()))) {
       result = sourceIllegal;
       ErrorPtr = Pos;
     } else {
@@ -207,8 +208,8 @@ bool convertUTF8ToUTF16String(StringRef SrcUTF8,
     return true;
   }
 
-  const UTF8 *Src = reinterpret_cast<const UTF8 *>(SrcUTF8.begin());
-  const UTF8 *SrcEnd = reinterpret_cast<const UTF8 *>(SrcUTF8.end());
+  const UTF8 *Src = reinterpret_cast<const UTF8 *>(SrcUTF8.data());
+  const UTF8 *SrcEnd = reinterpret_cast<const UTF8 *>(SrcUTF8.data() + SrcUTF8.size());
 
   // Allocate the same number of UTF-16 code units as UTF-8 code units. Encoding
   // as UTF-16 should always require the same amount or less code units than the
@@ -314,3 +315,4 @@ bool IsSingleCodeUnitUTF32Codepoint(unsigned V) {
 }
 
 } // end namespace llvm
+

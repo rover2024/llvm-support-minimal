@@ -46,18 +46,44 @@
 #ifndef LLVM_SUPPORT_JSON_H
 #define LLVM_SUPPORT_JSON_H
 
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/STLFunctionalExtras.h"
+// #include "llvm/ADT/DenseMap.h"
+// #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
+// #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/AlignOf.h"
+// #include "llvm/Support/Error.h"
+// #include "llvm/Support/FormatVariadic.h"
+// #include "llvm/Support/raw_ostream.h"
 #include <cmath>
 #include <map>
+#include <string>
+#include <optional>
+#include <iostream>
+#include <sstream>
 
 namespace llvm {
+
+using StringRef = std::string_view;
+using StringLiteral = std::string_view;
+
+namespace json {
+
+  class ObjectKey;  
+
+  struct ObjectKeyCompare {
+    using is_transparent = void;
+    bool operator()(const ObjectKey &LHS, const StringRef &RHS) const {
+      return false;
+    }
+    bool operator()(const StringRef &LHS, const ObjectKey &RHS) const {
+      return false;
+    }
+  };
+
+}
+
 namespace json {
 
 // === String encodings ===
@@ -96,7 +122,7 @@ template <typename T> Value toJSON(const std::optional<T> &Opt);
 /// An Object is a JSON object, which maps strings to heterogenous JSON values.
 /// It simulates DenseMap<ObjectKey, Value>. ObjectKey is a maybe-owned string.
 class Object {
-  using Storage = DenseMap<ObjectKey, Value, llvm::DenseMapInfo<StringRef>>;
+  using Storage = std::map<ObjectKey, Value>;
   Storage M;
 
 public:
@@ -133,8 +159,8 @@ public:
   bool erase(StringRef K);
   void erase(iterator I) { M.erase(I); }
 
-  iterator find(StringRef K) { return M.find_as(K); }
-  const_iterator find(StringRef K) const { return M.find_as(K); }
+  iterator find(StringRef K) { return M.find<StringRef, ObjectKeyCompare>(K); }
+  const_iterator find(StringRef K) const { return M.find<StringRef, ObjectKeyCompare>(K); }
   // operator[] acts as if Value was default-constructible as null.
   LLVM_ABI Value &operator[](const ObjectKey &K);
   LLVM_ABI Value &operator[](ObjectKey &&K);
@@ -322,7 +348,7 @@ public:
   }
   Value(const llvm::SmallVectorImpl<char> &V)
       : Value(std::string(V.begin(), V.end())) {}
-  Value(const llvm::formatv_object_base &V) : Value(V.str()) {}
+  // Value(const llvm::formatv_object_base &V) : Value(V.str()) {}
   // Strings: types with reference semantics. Must be valid UTF-8.
   Value(StringRef V) : Type(T_StringRef) {
     create<llvm::StringRef>(V);
@@ -472,13 +498,13 @@ public:
     return LLVM_LIKELY(Type == T_Array) ? &as<json::Array>() : nullptr;
   }
 
-  LLVM_ABI void print(llvm::raw_ostream &OS) const;
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-  LLVM_DUMP_METHOD void dump() const {
-    print(llvm::dbgs());
-    llvm::dbgs() << '\n';
-  }
-#endif // !NDEBUG || LLVM_ENABLE_DUMP
+  LLVM_ABI void print(std::ostream &OS) const;
+// #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+//   LLVM_DUMP_METHOD void dump() const {
+//     print(llvm::dbgs());
+//     llvm::dbgs() << '\n';
+//   }
+// #endif // !NDEBUG || LLVM_ENABLE_DUMP
 
 private:
   LLVM_ABI void destroy();
@@ -601,7 +627,7 @@ public:
   }
   ObjectKey(const llvm::SmallVectorImpl<char> &V)
       : ObjectKey(std::string(V.begin(), V.end())) {}
-  ObjectKey(const llvm::formatv_object_base &V) : ObjectKey(V.str()) {}
+  // ObjectKey(const llvm::formatv_object_base &V) : ObjectKey(V.str()) {}
 
   ObjectKey(const ObjectKey &C) { *this = C; }
   ObjectKey(ObjectKey &&C) : ObjectKey(static_cast<const ObjectKey &&>(C)) {}
@@ -617,7 +643,7 @@ public:
   ObjectKey &operator=(ObjectKey &&) = default;
 
   operator llvm::StringRef() const { return Data; }
-  std::string str() const { return Data.str(); }
+  std::string str() const { return Data.data(); }
 
 private:
   // FIXME: this is unneccesarily large (3 pointers). Pointer + length + owned
@@ -645,7 +671,7 @@ inline Object::Object(std::initializer_list<KV> Properties) {
   for (const auto &P : Properties) {
     auto R = try_emplace(P.K, nullptr);
     if (R.second)
-      R.first->getSecond().moveFrom(std::move(P.V));
+      R.first->second.moveFrom(std::move(P.V));
   }
 }
 inline std::pair<Object::iterator, bool> Object::insert(KV E) {
@@ -724,7 +750,7 @@ public:
   Root &operator=(const Root &) = delete;
 
   /// Returns the last error reported, or else a generic error.
-  LLVM_ABI Error getError() const;
+  LLVM_ABI std::string getError() const;
   /// Print the root value with the error shown inline as a comment.
   /// Unrelated parts of the value are elided for brevity, e.g.
   ///   {
@@ -732,7 +758,7 @@ public:
   ///      "name": /* expected string */ null,
   ///      "properties": { ... }
   ///   }
-  LLVM_ABI void printErrorContext(const Value &, llvm::raw_ostream &) const;
+  LLVM_ABI void printErrorContext(const Value &, std::ostream &) const;
 };
 
 // Standard deserializers are provided for primitive types.
@@ -904,39 +930,46 @@ private:
   Path P;
 };
 
-/// Parses the provided JSON source, or returns a ParseError.
-/// The returned Value is self-contained and owns its strings (they do not refer
-/// to the original source).
-LLVM_ABI llvm::Expected<Value> parse(llvm::StringRef JSON);
-
-class ParseError : public llvm::ErrorInfo<ParseError> {
+class ParseError {
   const char *Msg;
   unsigned Line, Column, Offset;
 
 public:
-  LLVM_ABI static char ID;
+  // LLVM_ABI static char ID;
   ParseError(const char *Msg, unsigned Line, unsigned Column, unsigned Offset)
       : Msg(Msg), Line(Line), Column(Column), Offset(Offset) {}
-  void log(llvm::raw_ostream &OS) const override {
-    OS << llvm::formatv("[{0}:{1}, byte={2}]: {3}", Line, Column, Offset, Msg);
+  void log(std::ostream &OS) const {
+    // OS << llvm::formatv("[{0}:{1}, byte={2}]: {3}", Line, Column, Offset, Msg);
+    OS << "[" << Line << ":" << Column << ", byte=" << Offset << "]: " << Msg;
   }
-  std::error_code convertToErrorCode() const override {
-    return llvm::inconvertibleErrorCode();
+
+  std::string message() const {
+    std::ostringstream OS;
+    log(OS);
+    return OS.str();
   }
+  // std::error_code convertToErrorCode() const override {
+  //   return llvm::inconvertibleErrorCode();
+  // }
 };
+
+/// Parses the provided JSON source, or returns a ParseError.
+/// The returned Value is self-contained and owns its strings (they do not refer
+/// to the original source).
+LLVM_ABI std::pair<std::optional<Value>, std::optional<ParseError>> parse(llvm::StringRef JSON);
 
 /// Version of parse() that converts the parsed value to the type T.
 /// RootName describes the root object and is used in error messages.
 template <typename T>
-Expected<T> parse(const llvm::StringRef &JSON, const char *RootName = "") {
+std::pair<std::optional<T>, std::optional<std::string>> parse(const llvm::StringRef &JSON, const char *RootName = "") {
   auto V = parse(JSON);
-  if (!V)
-    return V.takeError();
+  if (!V.first)
+    return std::make_pair(std::nullopt, V.second->message());
   Path::Root R(RootName);
   T Result;
-  if (fromJSON(*V, Result, R))
-    return std::move(Result);
-  return R.getError();
+  if (fromJSON(*V.first, Result, R))
+    return std::make_pair(std::move(Result), std::nullopt);
+  return std::make_pair(std::nullopt, R.getError());
 }
 
 /// json::OStream allows writing well-formed JSON without materializing
@@ -995,9 +1028,9 @@ Expected<T> parse(const llvm::StringRef &JSON, const char *RootName = "") {
 /// With asserts disabled, this is undefined behavior.
 class OStream {
  public:
-  using Block = llvm::function_ref<void()>;
+  using Block = const std::function<void()> &;
   // If IndentSize is nonzero, output is pretty-printed.
-  explicit OStream(llvm::raw_ostream &OS, unsigned IndentSize = 0)
+  explicit OStream(std::ostream &OS, unsigned IndentSize = 0)
       : OS(OS), IndentSize(IndentSize) {
     Stack.emplace_back();
   }
@@ -1031,13 +1064,13 @@ class OStream {
   /// Emit an externally-serialized value.
   /// The caller must write exactly one valid JSON value to the provided stream.
   /// No validation or formatting of this value occurs.
-  void rawValue(llvm::function_ref<void(raw_ostream &)> Contents) {
+  void rawValue(const std::function<void(std::ostream &)> &Contents) {
     rawValueBegin();
     Contents(OS);
     rawValueEnd();
   }
   void rawValue(llvm::StringRef Contents) {
-    rawValue([&](raw_ostream &OS) { OS << Contents; });
+    rawValue([&](std::ostream &OS) { OS << Contents; });
   }
   /// Emit a JavaScript comment associated with the next printed value.
   /// The string must be valid until the next attribute or value is emitted.
@@ -1069,7 +1102,7 @@ class OStream {
   LLVM_ABI void objectEnd();
   LLVM_ABI void attributeBegin(llvm::StringRef Key);
   LLVM_ABI void attributeEnd();
-  LLVM_ABI raw_ostream &rawValueBegin();
+  LLVM_ABI std::ostream &rawValueBegin();
   LLVM_ABI void rawValueEnd();
 
 private:
@@ -1095,7 +1128,7 @@ private:
   };
   llvm::SmallVector<State, 16> Stack; // Never empty.
   llvm::StringRef PendingComment;
-  llvm::raw_ostream &OS;
+  std::ostream &OS;
   unsigned IndentSize;
   unsigned Indent = 0;
 };
@@ -1103,7 +1136,7 @@ private:
 /// Serializes this Value to JSON, writing it to the provided stream.
 /// The formatting is compact (no extra whitespace) and deterministic.
 /// For pretty-printing, use the formatv() format_provider below.
-inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Value &V) {
+inline std::ostream &operator<<(std::ostream &OS, const Value &V) {
   OStream(OS).value(V);
   return OS;
 }
@@ -1112,10 +1145,11 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Value &V) {
 /// Allow printing json::Value with formatv().
 /// The default style is basic/compact formatting, like operator<<.
 /// A format string like formatv("{0:2}", Value) pretty-prints with indent 2.
-template <> struct format_provider<llvm::json::Value> {
-  LLVM_ABI static void format(const llvm::json::Value &, raw_ostream &,
-                              StringRef);
-};
+// template <> struct format_provider<llvm::json::Value> {
+namespace json {
+  LLVM_ABI void format(const llvm::json::Value &, std::ostream &, int IndentAmount = 0);
+}
+// };
 } // namespace llvm
 
 #endif

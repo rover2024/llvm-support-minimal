@@ -17,8 +17,8 @@
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
-class StringRef;
-class Twine;
+// class StringRef;
+// class Twine;
 
 /// An error handler callback.
 typedef void (*fatal_error_handler_t)(void *user_data, const char *reason,
@@ -62,10 +62,10 @@ struct ScopedFatalErrorHandler {
 /// instead.
 [[noreturn]] LLVM_ABI void report_fatal_error(const char *reason,
                                               bool gen_crash_diag = true);
-[[noreturn]] LLVM_ABI void report_fatal_error(StringRef reason,
-                                              bool gen_crash_diag = true);
-[[noreturn]] LLVM_ABI void report_fatal_error(const Twine &reason,
-                                              bool gen_crash_diag = true);
+// [[noreturn]] LLVM_ABI void report_fatal_error(StringRef reason,
+//                                               bool gen_crash_diag = true);
+// [[noreturn]] LLVM_ABI void report_fatal_error(const Twine &reason,
+//                                               bool gen_crash_diag = true);
 
 /// Report a fatal error that likely indicates a bug in LLVM. It serves a
 /// similar purpose as an assertion, but is always enabled, regardless of the
@@ -75,8 +75,8 @@ struct ScopedFatalErrorHandler {
 /// and then abort. This will produce a crash trace and *will* ask users to
 /// report an LLVM bug.
 [[noreturn]] LLVM_ABI void reportFatalInternalError(const char *reason);
-[[noreturn]] LLVM_ABI void reportFatalInternalError(StringRef reason);
-[[noreturn]] LLVM_ABI void reportFatalInternalError(const Twine &reason);
+// [[noreturn]] LLVM_ABI void reportFatalInternalError(StringRef reason);
+// [[noreturn]] LLVM_ABI void reportFatalInternalError(const Twine &reason);
 
 /// Report a fatal error that does not indicate a bug in LLVM.
 ///
@@ -93,8 +93,8 @@ struct ScopedFatalErrorHandler {
 /// and then exit with code 1. It will not produce a crash trace and will
 /// *not* ask users to report an LLVM bug.
 [[noreturn]] LLVM_ABI void reportFatalUsageError(const char *reason);
-[[noreturn]] LLVM_ABI void reportFatalUsageError(StringRef reason);
-[[noreturn]] LLVM_ABI void reportFatalUsageError(const Twine &reason);
+// [[noreturn]] LLVM_ABI void reportFatalUsageError(StringRef reason);
+// [[noreturn]] LLVM_ABI void reportFatalUsageError(const Twine &reason);
 
 /// Installs a new bad alloc error handler that should be used whenever a
 /// bad alloc error, e.g. failing malloc/calloc, is encountered by LLVM.

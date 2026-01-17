@@ -7,25 +7,28 @@
 //===---------------------------------------------------------------------===//
 
 #include "llvm/Support/JSON.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/ArrayRef.h"
+// #include "llvm/ADT/STLExtras.h"
+// #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ConvertUTF.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/Format.h"
-#include "llvm/Support/NativeFormatting.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/bit.h"
+// #include "llvm/Support/Error.h"
+// #include "llvm/Support/Format.h"
+// #include "llvm/Support/NativeFormatting.h"
+// #include "llvm/Support/raw_ostream.h"
 #include <cctype>
 #include <cerrno>
 #include <optional>
+#include <sstream>
 
 namespace llvm {
 namespace json {
 
 Value &Object::operator[](const ObjectKey &K) {
-  return try_emplace(K, nullptr).first->getSecond();
+  return try_emplace(K, nullptr).first->second;
 }
 Value &Object::operator[](ObjectKey &&K) {
-  return try_emplace(std::move(K), nullptr).first->getSecond();
+  return try_emplace(std::move(K), nullptr).first->second;
 }
 Value *Object::get(StringRef K) {
   auto I = find(K);
@@ -182,7 +185,7 @@ void Value::destroy() {
   }
 }
 
-void Value::print(llvm::raw_ostream &OS) const { OS << *this; }
+void Value::print(std::ostream &OS) const { OS << *this; }
 
 bool operator==(const Value &L, const Value &R) {
   if (L.kind() != R.kind())
@@ -225,30 +228,30 @@ void Path::report(llvm::StringLiteral Msg) {
     *It++ = P->Seg;
 }
 
-Error Path::Root::getError() const {
-  std::string S;
-  raw_string_ostream OS(S);
+std::string Path::Root::getError() const {
+  std::stringstream OS;
   OS << (ErrorMessage.empty() ? "invalid JSON contents" : ErrorMessage);
   if (ErrorPath.empty()) {
     if (!Name.empty())
       OS << " when parsing " << Name;
   } else {
     OS << " at " << (Name.empty() ? "(root)" : Name);
-    for (const Path::Segment &S : llvm::reverse(ErrorPath)) {
+    for (auto It = ErrorPath.rbegin(); It != ErrorPath.rend(); ++It) {
+      const Segment &S = *It;
       if (S.isField())
         OS << '.' << S.field();
       else
         OS << '[' << S.index() << ']';
     }
   }
-  return createStringError(llvm::inconvertibleErrorCode(), S);
+  return OS.str();
 }
 
 std::vector<const Object::value_type *> sortedElements(const Object &O) {
   std::vector<const Object::value_type *> Elements;
   for (const auto &E : O)
     Elements.push_back(&E);
-  llvm::sort(Elements,
+  std::sort(Elements.begin(), Elements.end(),
              [](const Object::value_type *L, const Object::value_type *R) {
                return L->first < R->first;
              });
@@ -271,7 +274,7 @@ static void abbreviate(const Value &V, OStream &JOS) {
     if (S.size() < 40) {
       JOS.value(V);
     } else {
-      std::string Truncated = fixUTF8(S.take_front(37));
+      std::string Truncated = fixUTF8(S.substr(0, 37));
       Truncated.append("...");
       JOS.value(Truncated);
     }
@@ -306,7 +309,7 @@ static void abbreviateChildren(const Value &V, OStream &JOS) {
   }
 }
 
-void Path::Root::printErrorContext(const Value &R, raw_ostream &OS) const {
+void Path::Root::printErrorContext(const Value &R, std::ostream &OS) const {
   OStream JOS(OS, /*IndentSize=*/2);
   // PrintValue recurses down the path, printing the ancestors of our target.
   // Siblings of nodes along the path are printed with abbreviate(), and the
@@ -365,7 +368,7 @@ namespace {
 class Parser {
 public:
   Parser(StringRef JSON)
-      : Start(JSON.begin()), P(JSON.begin()), End(JSON.end()) {}
+      : Start(JSON.data()), P(JSON.data()), End(JSON.data() + JSON.size()) {}
 
   bool checkUTF8() {
     size_t ErrOffset;
@@ -384,7 +387,7 @@ public:
     return parseError("Text after end of document");
   }
 
-  Error takeError() {
+  ParseError takeError() {
     assert(Err);
     return std::move(*Err);
   }
@@ -409,7 +412,7 @@ private:
            C == 'e' || C == 'E' || C == '+' || C == '-' || C == '.';
   }
 
-  std::optional<Error> Err;
+  std::optional<ParseError> Err;
   const char *Start, *P, *End;
 };
 } // namespace
@@ -505,16 +508,20 @@ bool Parser::parseValue(Value &Out) {
 
 bool Parser::parseNumber(char First, Value &Out) {
   // Read the number into a string. (Must be null-terminated for strto*).
-  SmallString<24> S;
+  SmallVector<char, 24> S;
   S.push_back(First);
   while (isNumber(peek()))
     S.push_back(next());
+
+  S.push_back(0);
+  S.pop_back();
+    
   char *End;
   // Try first to parse as integer, and if so preserve full 64 bits.
   // We check for errno for out of bounds errors and for End == S.end()
   // to make sure that the numeric string is not malformed.
   errno = 0;
-  int64_t I = std::strtoll(S.c_str(), &End, 10);
+  int64_t I = std::strtoll(S.data(), &End, 10);
   if (End == S.end() && errno != ERANGE) {
     Out = I;
     return true;
@@ -524,14 +531,14 @@ bool Parser::parseNumber(char First, Value &Out) {
   // handled in the previous block.
   if (First != '-') {
     errno = 0;
-    uint64_t UI = std::strtoull(S.c_str(), &End, 10);
+    uint64_t UI = std::strtoull(S.data(), &End, 10);
     if (End == S.end() && errno != ERANGE) {
       Out = UI;
       return true;
     }
   }
   // If it's not an integer
-  Out = std::strtod(S.c_str(), &End);
+  Out = std::strtod(S.data(), &End);
   return End == S.end() || parseError("Invalid JSON value (number?)");
 }
 
@@ -676,21 +683,31 @@ bool Parser::parseError(const char *Msg) {
       StartOfLine = X + 1;
     }
   }
-  Err.emplace(
-      std::make_unique<ParseError>(Msg, Line, P - StartOfLine, P - Start));
+  Err = ParseError(Msg, Line, P - StartOfLine, P - Start);
   return false;
 }
 
-Expected<Value> parse(StringRef JSON) {
+std::pair<std::optional<Value>, std::optional<ParseError>> parse(StringRef JSON) {
   Parser P(JSON);
   Value E = nullptr;
   if (P.checkUTF8())
     if (P.parseValue(E))
       if (P.assertEnd())
-        return std::move(E);
-  return P.takeError();
+        return {std::move(E), std::nullopt};
+  return {std::nullopt, P.takeError()};
 }
-char ParseError::ID = 0;
+// char ParseError::ID = 0;
+
+/// Checks whether character \p C is valid ASCII (high bit is zero).
+static inline bool isASCII(char C) { return static_cast<unsigned char>(C) <= 127; }
+
+/// Checks whether all characters in S are ASCII.
+static inline bool isASCII(llvm::StringRef S) {
+  for (char C : S)
+    if (LLVM_UNLIKELY(!isASCII(C)))
+      return false;
+  return true;
+}
 
 bool isUTF8(llvm::StringRef S, size_t *ErrOffset) {
   // Fast-path for ASCII, which is valid UTF-8.
@@ -723,7 +740,48 @@ std::string fixUTF8(llvm::StringRef S) {
   return Res;
 }
 
-static void quote(llvm::raw_ostream &OS, llvm::StringRef S) {
+enum class HexPrintStyle { Upper, Lower, PrefixUpper, PrefixLower };
+
+/// hexdigit - Return the hexadecimal character for the
+/// given number \p X (which should be less than 16).
+static inline char hexdigit(unsigned X, bool LowerCase = false) {
+  assert(X < 16);
+  static const char LUT[] = "0123456789ABCDEF";
+  const uint8_t Offset = LowerCase ? 32 : 0;
+  return LUT[X] | Offset;
+}
+
+static void write_hex(std::ostream &S, uint64_t N, HexPrintStyle Style,
+                     std::optional<size_t> Width) {
+  const size_t kMaxWidth = 128u;
+
+  size_t W = std::min(kMaxWidth, Width.value_or(0u));
+
+  unsigned Nibbles = (llvm::bit_width(N) + 3) / 4;
+  bool Prefix = (Style == HexPrintStyle::PrefixLower ||
+                 Style == HexPrintStyle::PrefixUpper);
+  bool Upper =
+      (Style == HexPrintStyle::Upper || Style == HexPrintStyle::PrefixUpper);
+  unsigned PrefixChars = Prefix ? 2 : 0;
+  unsigned NumChars =
+      std::max(static_cast<unsigned>(W), std::max(1u, Nibbles) + PrefixChars);
+
+  char NumberBuffer[kMaxWidth];
+  ::memset(NumberBuffer, '0', std::size(NumberBuffer));
+  if (Prefix)
+    NumberBuffer[1] = 'x';
+  char *EndPtr = NumberBuffer + NumChars;
+  char *CurPtr = EndPtr;
+  while (N) {
+    unsigned char x = static_cast<unsigned char>(N) % 16;
+    *--CurPtr = hexdigit(x, !Upper);
+    N /= 16;
+  }
+
+  S.write(NumberBuffer, NumChars);
+}
+
+static void quote(std::ostream &OS, llvm::StringRef S) {
   OS << '\"';
   for (unsigned char C : S) {
     if (C == 0x22 || C == 0x5C)
@@ -746,7 +804,7 @@ static void quote(llvm::raw_ostream &OS, llvm::StringRef S) {
       break;
     default:
       OS << 'u';
-      llvm::write_hex(OS, C, llvm::HexPrintStyle::Lower, 4);
+      write_hex(OS, C, HexPrintStyle::Lower, 4);
       break;
     }
   }
@@ -769,9 +827,12 @@ void llvm::json::OStream::value(const Value &V) {
       OS << *V.getAsInteger();
     else if (V.Type == Value::T_UINT64)
       OS << *V.getAsUINT64();
-    else
-      OS << format("%.*g", std::numeric_limits<double>::max_digits10,
+    else {
+      char Buffer[64];
+      snprintf(Buffer, sizeof(Buffer), "%.*g", std::numeric_limits<double>::max_digits10,
                    *V.getAsNumber());
+      OS << Buffer;
+    }
     return;
   case Value::String:
     valueBegin();
@@ -818,8 +879,8 @@ void OStream::flushComment() {
       OS << PendingComment;
       PendingComment = "";
     } else {
-      OS << PendingComment.take_front(Pos) << "* /";
-      PendingComment = PendingComment.drop_front(Pos + 2);
+      OS << PendingComment.substr(0, Pos) << "* /";
+      PendingComment = PendingComment.substr(Pos + 2);
     }
   }
   OS << (IndentSize ? " */" : "*/");
@@ -832,10 +893,40 @@ void OStream::flushComment() {
   }
 }
 
+template <char C>
+static std::ostream &write_char(std::ostream &OS) {
+  return OS << C;
+}
+
+template <char C>
+static std::ostream &write_padding(std::ostream &OS, unsigned NumChars) {
+  static const char Chars[] = {C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
+                               C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
+                               C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
+                               C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
+                               C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C};
+
+  // Usually the indentation is small, handle it with a fastpath.
+  if (NumChars < std::size(Chars))
+    return OS.write(Chars, NumChars);
+
+  while (NumChars) {
+    unsigned NumToWrite = std::min(NumChars, (unsigned)std::size(Chars) - 1);
+    OS.write(Chars, NumToWrite);
+    NumChars -= NumToWrite;
+  }
+  return OS;
+}
+
+/// indent - Insert 'NumSpaces' spaces.
+std::ostream &write_indent(std::ostream &OS, unsigned NumSpaces) {
+  return write_padding<' '>(OS, NumSpaces);
+}
+
 void llvm::json::OStream::newline() {
   if (IndentSize) {
-    OS.write('\n');
-    OS.indent(Indent);
+    write_char<'\n'>(OS);
+    write_indent(OS, Indent);
   }
 }
 
@@ -892,9 +983,9 @@ void llvm::json::OStream::attributeBegin(llvm::StringRef Key) {
     assert(false && "Invalid UTF-8 in attribute key");
     quote(OS, fixUTF8(Key));
   }
-  OS.write(':');
+  write_char<':'>(OS);
   if (IndentSize)
-    OS.write(' ');
+    write_char<' '>(OS);
 }
 
 void llvm::json::OStream::attributeEnd() {
@@ -905,7 +996,7 @@ void llvm::json::OStream::attributeEnd() {
   assert(Stack.back().Ctx == Object);
 }
 
-raw_ostream &llvm::json::OStream::rawValueBegin() {
+std::ostream &llvm::json::OStream::rawValueBegin() {
   valueBegin();
   Stack.emplace_back();
   Stack.back().Ctx = RawValue;
@@ -920,11 +1011,14 @@ void llvm::json::OStream::rawValueEnd() {
 } // namespace json
 } // namespace llvm
 
-void llvm::format_provider<llvm::json::Value>::format(
-    const llvm::json::Value &E, raw_ostream &OS, StringRef Options) {
-  unsigned IndentAmount = 0;
-  if (!Options.empty() && Options.getAsInteger(/*Radix=*/10, IndentAmount))
-    llvm_unreachable("json::Value format options should be an integer");
+namespace llvm {
+namespace json {
+void format(
+    const llvm::json::Value &E, std::ostream &OS, int IndentAmount) {
+  // unsigned IndentAmount = 0;
+  // if (!Options.empty() && Options.getAsInteger(/*Radix=*/10, IndentAmount))
+  //   llvm_unreachable("json::Value format options should be an integer");
   json::OStream(OS, IndentAmount).value(E);
 }
-
+}
+}

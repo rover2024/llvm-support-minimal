@@ -9,9 +9,9 @@
 #ifndef LLVM_ADT_ARRAYREF_H
 #define LLVM_ADT_ARRAYREF_H
 
-#include "llvm/ADT/Hashing.h"
+// #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/STLExtras.h"
+// #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Compiler.h"
 #include <algorithm>
 #include <array>
@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
@@ -123,10 +124,10 @@ namespace llvm {
     /// Construct an ArrayRef<T> from iterator_range<U*>. This uses SFINAE
     /// to ensure that this is only used for iterator ranges over plain pointer
     /// iterators.
-    template <typename U, typename = std::enable_if_t<
-                              std::is_convertible_v<U *const *, T *const *>>>
-    ArrayRef(const iterator_range<U *> &Range)
-        : Data(Range.begin()), Length(llvm::size(Range)) {}
+    // template <typename U, typename = std::enable_if_t<
+    //                           std::is_convertible_v<U *const *, T *const *>>>
+    // ArrayRef(const iterator_range<U *> &Range)
+    //     : Data(Range.begin()), Length(llvm::size(Range)) {}
 
     /// @}
     /// @name Simple Operations
@@ -173,11 +174,11 @@ namespace llvm {
     }
 
     // copy - Allocate copy in Allocator and return ArrayRef<T> to it.
-    template <typename Allocator> MutableArrayRef<T> copy(Allocator &A) {
-      T *Buff = A.template Allocate<T>(Length);
-      llvm::uninitialized_copy(*this, Buff);
-      return MutableArrayRef<T>(Buff, Length);
-    }
+    // template <typename Allocator> MutableArrayRef<T> copy(Allocator &A) {
+    //   T *Buff = A.template Allocate<T>(Length);
+    //   llvm::uninitialized_copy(*this, Buff);
+    //   return MutableArrayRef<T>(Buff, Length);
+    // }
 
     /// equals - Check for element-wise equality.
     bool equals(ArrayRef RHS) const {
@@ -210,15 +211,15 @@ namespace llvm {
 
     /// Return a copy of *this with the first N elements satisfying the
     /// given predicate removed.
-    template <class PredicateT> ArrayRef<T> drop_while(PredicateT Pred) const {
-      return ArrayRef<T>(find_if_not(*this, Pred), end());
-    }
+    // template <class PredicateT> ArrayRef<T> drop_while(PredicateT Pred) const {
+    //   return ArrayRef<T>(find_if_not(*this, Pred), end());
+    // }
 
-    /// Return a copy of *this with the first N elements not satisfying
-    /// the given predicate removed.
-    template <class PredicateT> ArrayRef<T> drop_until(PredicateT Pred) const {
-      return ArrayRef<T>(find_if(*this, Pred), end());
-    }
+    // /// Return a copy of *this with the first N elements not satisfying
+    // /// the given predicate removed.
+    // template <class PredicateT> ArrayRef<T> drop_until(PredicateT Pred) const {
+    //   return ArrayRef<T>(find_if(*this, Pred), end());
+    // }
 
     /// Return a copy of *this with only the first \p N elements.
     ArrayRef<T> take_front(size_t N = 1) const {
@@ -236,15 +237,15 @@ namespace llvm {
 
     /// Return the first N elements of this Array that satisfy the given
     /// predicate.
-    template <class PredicateT> ArrayRef<T> take_while(PredicateT Pred) const {
-      return ArrayRef<T>(begin(), find_if_not(*this, Pred));
-    }
+    // template <class PredicateT> ArrayRef<T> take_while(PredicateT Pred) const {
+    //   return ArrayRef<T>(begin(), find_if_not(*this, Pred));
+    // }
 
-    /// Return the first N elements of this Array that don't satisfy the
-    /// given predicate.
-    template <class PredicateT> ArrayRef<T> take_until(PredicateT Pred) const {
-      return ArrayRef<T>(begin(), find_if(*this, Pred));
-    }
+    // /// Return the first N elements of this Array that don't satisfy the
+    // /// given predicate.
+    // template <class PredicateT> ArrayRef<T> take_until(PredicateT Pred) const {
+    //   return ArrayRef<T>(begin(), find_if(*this, Pred));
+    // }
 
     /// @}
     /// @name Operator Overloads
@@ -588,38 +589,38 @@ namespace llvm {
 
   /// @}
 
-  template <typename T> hash_code hash_value(ArrayRef<T> S) {
-    return hash_combine_range(S);
-  }
+  // template <typename T> hash_code hash_value(ArrayRef<T> S) {
+  //   return hash_combine_range(S);
+  // }
 
   // Provide DenseMapInfo for ArrayRefs.
-  template <typename T> struct DenseMapInfo<ArrayRef<T>, void> {
-    static inline ArrayRef<T> getEmptyKey() {
-      return ArrayRef<T>(
-          reinterpret_cast<const T *>(~static_cast<uintptr_t>(0)), size_t(0));
-    }
+  // template <typename T> struct DenseMapInfo<ArrayRef<T>, void> {
+  //   static inline ArrayRef<T> getEmptyKey() {
+  //     return ArrayRef<T>(
+  //         reinterpret_cast<const T *>(~static_cast<uintptr_t>(0)), size_t(0));
+  //   }
 
-    static inline ArrayRef<T> getTombstoneKey() {
-      return ArrayRef<T>(
-          reinterpret_cast<const T *>(~static_cast<uintptr_t>(1)), size_t(0));
-    }
+  //   static inline ArrayRef<T> getTombstoneKey() {
+  //     return ArrayRef<T>(
+  //         reinterpret_cast<const T *>(~static_cast<uintptr_t>(1)), size_t(0));
+  //   }
 
-    static unsigned getHashValue(ArrayRef<T> Val) {
-      assert(Val.data() != getEmptyKey().data() &&
-             "Cannot hash the empty key!");
-      assert(Val.data() != getTombstoneKey().data() &&
-             "Cannot hash the tombstone key!");
-      return (unsigned)(hash_value(Val));
-    }
+  //   static unsigned getHashValue(ArrayRef<T> Val) {
+  //     assert(Val.data() != getEmptyKey().data() &&
+  //            "Cannot hash the empty key!");
+  //     assert(Val.data() != getTombstoneKey().data() &&
+  //            "Cannot hash the tombstone key!");
+  //     return (unsigned)(hash_value(Val));
+  //   }
 
-    static bool isEqual(ArrayRef<T> LHS, ArrayRef<T> RHS) {
-      if (RHS.data() == getEmptyKey().data())
-        return LHS.data() == getEmptyKey().data();
-      if (RHS.data() == getTombstoneKey().data())
-        return LHS.data() == getTombstoneKey().data();
-      return LHS == RHS;
-    }
-  };
+  //   static bool isEqual(ArrayRef<T> LHS, ArrayRef<T> RHS) {
+  //     if (RHS.data() == getEmptyKey().data())
+  //       return LHS.data() == getEmptyKey().data();
+  //     if (RHS.data() == getTombstoneKey().data())
+  //       return LHS.data() == getTombstoneKey().data();
+  //     return LHS == RHS;
+  //   }
+  // };
 
 } // end namespace llvm
 
